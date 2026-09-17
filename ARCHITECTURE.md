@@ -1,31 +1,21 @@
-# Arquitetura do Sistema
+# Resumo das Decisões Técnicas e Arquiteturais
 
-## Visão geral
+Estruturei o projeto baseando-me nos princípios de Domain-Driven Design (DDD) e Clean Architecture[cite: 1, 2]. Essa decisão reflete meu foco em padrões de arquitetura de software, garantindo que o domínio financeiro fique rigorosamente isolado de frameworks e detalhes de infraestrutura[cite: 1]. Para manter a clareza, a rastreabilidade dessas escolhas e o alinhamento com a implementação, adotei uma estratégia de documentação baseada em **Software Design Documents (SDD)** fragmentados por *feature*.
 
-O sistema é estruturado em camadas para separar domínio, aplicação e infraestrutura:
+## 1. Documentação via SDD por Feature
+Em vez de um único arquivo monolítico, consolidei os requisitos e regras de negócio no diretório `/SDD`, dividindo o contexto da aplicação em arquivos Markdown dedicados por responsabilidade técnica[cite: 1, 2]. 
 
-- `internal/domain` contém regras de negócio imutáveis e robustas, sem dependência de Fx, HTTP ou banco de dados.
-- `internal/application` define casos de uso e interfaces de porta para repositórios e serviços externos.
-- `internal/infrastructure` efetua a adaptação ao PostgreSQL, SQS, OAuth/OIDC e HTTP.
-- `internal/di` centraliza a wiring com Uber Fx e lifecycle hooks.
+*   **Modularidade Documental:** Criei documentos específicos como `domain.md`, `database.md`, `mensageria.md`, `idempotencia.md` e `autenticacao.md`[cite: 1]. Isso reflete a própria estrutura modular do código e facilita a manutenção contínua.
+*   **Otimização para Agentes de IA:** Essa separação granular atua como um processo otimizado para agentes de IA atuarem no projeto[cite: 2]. A IA (e outros desenvolvedores) pode ler contextos específicos antes de escrever código, o que reduz drasticamente os erros de arquitetura, alucinações de design e violações de regras financeiras rigorosas[cite: 2].
 
-## Estratégia financeira
+## 2. Decisões Técnicas Core e Mapeamento SDD
+Todas as decisões de implementação foram guiadas pelas restrições de consistência e escalabilidade, fortemente amarradas aos seus respectivos SDDs:
 
-- Toda movimentação financeira usa inteiros em centavos, nunca float.
-- Saldo negativo é proibido por constraint no banco e validação no agregado Wallet.
-- O Ledger é append-only e registros imutáveis; correções são feitas por transações compensatórias.
-
-## Concorrência e consistência
-
-- A aplicação separa transações de domínio e alterações em contas por unidade de trabalho.
-- O uso de versões do agregado e testes de concorrência permite proteger o cenário de lost update.
-- O outbox e inbox garantem consistência entre commit SQL e publicação de eventos em filas externas.
-
-## Segurança
-
-- A autenticação é tratada por OIDC e middleware de HTTP para validar o token e extrair o `providerId` do contexto.
-- A idempotência é exigida por chave e hash do payload para evitar duplicação persistente de transações.
-
-## Observações
-
-Este scaffold estabelece a base arquitetural e serviços de infraestrutura necessários para evoluir para a implementação completa do desafio de apostas distribuídas.
+*   **Injeção de Dependências e Ciclo de Vida (`/SDD/di.md`):** Adotei o Uber Fx para a composição da aplicação[cite: 1, 2]. Ele gerencia de forma segura a inicialização e o *graceful shutdown* dos handlers HTTP e workers do SQS, assegurando que o processamento em andamento seja concluído antes da liberação de recursos, sem o risco de corromper o estado em memória[cite: 2].
+*   **Precisão Monetária (`/SDD/domain.md`):** Modelei o `Money` como um Value Object para operar sem o uso de ponto flutuante (`float32` ou `float64`), utilizando `int64` em unidades mínimas[cite: 2]. Isso blinda o sistema contra erros de arredondamento em cálculos e serializações[cite: 2].
+*   **Controle de Concorrência e Transações (`/SDD/database.md` e `/SDD/repository.md`):** Implementei o padrão Unit of Work (`unit_of_work.go`) suportado pelo PostgreSQL[cite: 1, 2]. O controle de concorrência é feito diretamente na raiz do agregado (a carteira) usando *row-level locking*[cite: 2]. Isso garante que atualizações de saldo e as entradas no ledger (que é estritamente *append-only*) ocorram de maneira atômica e paralela, sem gargalos globais[cite: 2].
+*   **Idempotência Persistente e Inbox Pattern (`/SDD/idempotencia.md`):** A idempotência foi garantida de ponta a ponta e sobrevive a reinicializações dos containers[cite: 2]. Utilizo um middleware atrelado ao banco para requisições HTTP[cite: 1]. Para o consumo assíncrono via SQS, implementei o padrão Inbox (`inbox_repository.go` e `inbox_worker.go`) para barrar o reprocessamento da mesma mensagem `messageId` sob estresse ou falhas de rede[cite: 1, 2].
+*   **Mensageria Segura com Transactional Outbox (`/SDD/mensageria.md`):** O envio de eventos para as filas só acontece mediante a confirmação da transação original no banco de dados[cite: 2]. O fluxo persiste os eventos na tabela outbox na mesma transação SQL da aposta, e um *worker* dedicado (`outbox_publisher.go`) se encarrega de publicá-los no SQS com suporte a *retry* e *backoff*[cite: 1, 2].
+*   **Autenticação Multi-Tenant (`/SDD/autenticacao.md`):** Integrei o sistema a um IdP OIDC (OAuth 2.0)[cite: 1, 2]. Os middlewares validam as credenciais `client_credentials` em todas as requisições, garantindo um isolamento severo: a identidade autenticada determina o `providerId`, impedindo que um provedor acesse transações ou o ledger de outro[cite: 2].
+*   **Consistência Estrutural (`/SDD/migrations.md`):** A integridade das invariantes financeiras não depende apenas da memória do Go[cite: 2]. Utilizei *migrations* versionadas em SQL (`001_init_schema.sql` até `006_outbox-retry-and-concurrency.sql`) para travar as regras diretamente no *schema*, utilizando *constraints* para impedir perdas de atualização, saldos negativos e garantir a unicidade[cite: 1, 2].
+*   **Cobertura Orientada a Falhas (`/SDD/test.md`):** A validação do comportamento sob falhas de infraestrutura e referências pendentes foi ancorada no script `e2e.sh`[cite: 1, 2]. Ele executa a suíte de testes unitários e de integração de forma automatizada, utilizando a flag `-race` nativa do Go, para comprovar o funcionamento coordenado sob alta contenção sem *data races*[cite: 1, 2].
