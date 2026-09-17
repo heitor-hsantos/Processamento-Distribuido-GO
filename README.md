@@ -45,17 +45,12 @@ Para executar e testar o projeto a partir de um *checkout* limpo, você precisar
 
 ## 3. Configuração e Inicialização
 
-O projeto exige configurações de ambiente para rodar. Crie o seu arquivo local baseado no exemplo:
-
-```bash
-cp .env.example .env
-
 ```
 
 Suba a infraestrutura completa (PostgreSQL, LocalStack SQS e Keycloak) via Docker Compose:
 
 ```bash
-docker compose up -d --build
+docker compose up --build
 
 ```
 
